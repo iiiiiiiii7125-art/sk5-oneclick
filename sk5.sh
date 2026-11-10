@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
-# SK5 / SOCKS5 一键搭建脚本 v2 (基于 gost v2, 单二进制, 支持 UDP)
+# SK5 / SOCKS5 一键搭建脚本 v3 (基于 gost v2, 单二进制, 支持 UDP)
+# v3: 默认随机端口 (20000-60000, 自动避开已占用) + 随机用户名 + 随机密码, systemd 开机自启
 # v2 审计修复: 随机数生成 SIGPIPE 静默退出 / ARM64 资产名 armv8 / 参数缺值与用户名校验 / 非 systemd 环境识别
 # 支持: Debian / Ubuntu / CentOS / Rocky / Alma / Fedora / Alpine
 # 架构: x86_64 / aarch64 / armv7
@@ -63,6 +64,9 @@ rand_str() {
 # systemd 是否真正在运行 (只有 systemctl 二进制但没跑 systemd 的容器/LXC 里不能用它)
 has_systemd() { command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; }
 
+# 随机端口 20000-60000 (RANDOM 只有 15 位, 拼两个才够范围)
+rand_port() { echo $(( (RANDOM * 32768 + RANDOM) % 40001 + 20000 )); }
+
 show_info() {
   if [[ -f "$INFO_FILE" ]]; then
     cat "$INFO_FILE"
@@ -114,15 +118,7 @@ if [[ -n "$PASS_WORD" ]] && ! [[ "$PASS_WORD" =~ ^[A-Za-z0-9_-]+$ ]]; then
   echo "❌ 密码只能含字母/数字/_/- , 请换一个: 当前=$PASS_WORD"; exit 1
 fi
 
-# ---------- 默认值: 随机端口/账号/密码 ----------
-if [[ -z "$PORT" ]]; then
-  # 优先 1080, 被占用就随机 20000-50000
-  if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -q ':1080 '; then
-    PORT=$((RANDOM % 30000 + 20000))
-  else
-    PORT=1080
-  fi
-fi
+# ---------- 默认值: 随机账号/密码 (端口在依赖装完后随机生成, 见下) ----------
 [[ -z "$USER_NAME" ]] && USER_NAME="sk5$(rand_str 4 | tr 'A-Z' 'a-z')"
 [[ -z "$PASS_WORD" ]] && PASS_WORD="$(rand_str 16)"
 
@@ -137,6 +133,19 @@ elif command -v yum >/dev/null 2>&1; then
   yum install -y -q curl wget gzip iproute >/dev/null 2>&1 || true
 elif command -v apk >/dev/null 2>&1; then
   apk add --no-cache curl wget gzip iproute2 bash >/dev/null 2>&1 || true
+fi
+
+# ---------- 默认随机端口 (依赖已装完, ss 可用, 能避开已占用端口) ----------
+if [[ -z "$PORT" ]]; then
+  for _try in $(seq 1 30); do
+    _cand="$(rand_port)"
+    if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -q ":${_cand} "; then
+      continue
+    fi
+    PORT="$_cand"; break
+  done
+  [[ -n "$PORT" ]] || PORT="$(rand_port)"
+  echo "    本次随机端口: ${PORT}"
 fi
 
 # ---------- 下载 gost ----------
@@ -251,6 +260,7 @@ PUBLIC_IP="$(curl -fsS --connect-timeout 8 https://api.ipify.org 2>/dev/null || 
 TEST_IP="$(curl -fsS --connect-timeout 10 --socks5-hostname "${USER_NAME}:${PASS_WORD}@127.0.0.1:${PORT}" https://api.ipify.org 2>/dev/null || echo '')"
 
 mkdir -p "$INFO_DIR"
+if has_systemd; then AUTO_LINE="已启用 (systemd, 重启自动启动)"; else AUTO_LINE="未启用 (非 systemd 环境, 重启后需重新运行本脚本)"; fi
 cat > "$INFO_FILE" <<EOF
 ================ SK5 / SOCKS5 连接信息 ================
 地址 : ${PUBLIC_IP}
@@ -258,6 +268,7 @@ cat > "$INFO_FILE" <<EOF
 用户名 : ${USER_NAME}
 密码 : ${PASS_WORD}
 协议 : SOCKS5 (支持 TCP + UDP, 账号密码认证)
+开机自启 : ${AUTO_LINE}
 
 通用链接: socks5://${USER_NAME}:${PASS_WORD}@${PUBLIC_IP}:${PORT}
 
