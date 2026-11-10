@@ -10,7 +10,7 @@
 bash <(curl -sL https://raw.githubusercontent.com/iiiiiiiii7125-art/sk5-oneclick/main/sk5.sh)
 ```
 
-不带参数时自动生成：端口（优先 1080，被占用则随机）、随机用户名和 16 位随机密码，装完直接打印连接信息（同时保存在服务器 `/etc/sk5/info.txt`）。
+不带参数时全自动随机生成：**随机端口（20000–60000，自动避开已占用端口）、随机用户名、16 位随机密码**，并注册 systemd 服务开机自启（随系统重启自动启动）。装完直接打印连接信息（同时保存在服务器 `/etc/sk5/info.txt`）。
 
 指定端口和账号密码：
 
